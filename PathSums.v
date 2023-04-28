@@ -1,12 +1,12 @@
 Require Import Reals.
 Require Import Psatz.
 Require Export QuantumLib.Complex.
-Require Import QuantumLib.Quantum.
 Require Import List.
 Import ListNotations.
 
 (*
 TODO: 
+- [ ] Figure out better notation to distinguish from unitary semantics.
 - [ ] Define path-sum inductive semantics
 - [ ] Define function equivalent to uc_eval that puts the information in the sum/exponent form
 - [ ] Prove compose (both in parallel and in sequence) lemmas using path-sum semantics
@@ -17,17 +17,9 @@ TODO:
 Local Open Scope C_scope.
 Local Open Scope R_scope.
 
-Inductive pscom (P : nat -> Set) (width : nat) : Set :=
-    | pseq : pscom P width -> pscom P width -> pscom P width.
-    (*| pwidth1 : P 1%nat -> nat -> pscom P width
-    | pwidth2 : P 2%nat -> nat -> nat -> pscom P width.
-    Maybe include to use more similar semantics to the unitary? *)
-
 Declare Scope psum_scope.
 Delimit Scope psum_scope with psum.
 Local Open Scope psum.
-
-Notation "SEQ ( p1 , p2 )" := (pseq p1 p2) (at level 50) : psum_scope.
 
 Definition bv (n : nat) := list nat. 
 Definition get_bv {n : nat} (i : nat) (v : bv n) := nth i v O.
@@ -42,14 +34,58 @@ Definition bit (x : nat) : bv 1 :=
     | _ => bv1
     end.
 
+Inductive pscom (P : nat -> Set) (width : nat) : Set :=
+    | pseq : pscom P width -> pscom P width -> pscom P width (* path sum -> path sum -> path sum *)
+    | papp1 : P 1%nat -> nat -> pscom P width (* path sum operator -> index -> path sum *)
+    | papp2 : P 2%nat -> nat -> nat -> pscom P width. (* path sum -> index -> index -> path sum *)
+
+(* Set the dimension argument to be implicit. *)
+Arguments pseq {P width}.
+Arguments papp1 {P width}.
+Arguments papp2 {P width}.
+
+Notation "p1 , p2 " := (pseq p1 p2) (at level 50) : psum_scope.
+
+(* Functions we can call at each iteration of sum to get output ket and phase polynomial *)
+Definition output_bv (width : nat) := nat -> bv width -> bv width.
+Definition phase_poly (width : nat) := nat -> bv width -> C.
+(* index -> variable bitvector -> output ket/phase polynomial *)
+
 (* Phase -> Output -> Path sum *)
 Inductive base_path_sum : nat -> Set :=
-    | psum_1 : C -> bv 1 -> base_path_sum 1
-    | psum_2 : C -> bv 2 -> base_path_sum 2.
+    | psum_1 : nat -> phase_poly 1 -> output_bv 1 -> base_path_sum 1
+    | psum_2 : nat -> phase_poly 2 -> output_bv 2 -> base_path_sum 2.
+    (* range -> phase polynomial -> bitvector -> path sum *)
 
 Definition base_psum := pscom base_path_sum.
 
-Definition P_ID (x : bv 1) := psum_1 1 x.
+(* Clifford + T and Pauli gates *)
+Definition P_I := psum_1 0 (fun _ _ => 1) (fun _ x => x).
+Definition P_X := psum_1 0 (fun _ _ => 1) (fun _ x => [ (1 - x[0])%nat ]).
+Definition P_H := psum_1 1 (fun i x => (-1) ^ (x[0] * i)) (fun i _ => [ i ]).
+Definition P_S := psum_1 0 (fun _ x => Cexp (INR x[0] * (PI / 2))) (fun _ x => x).
+Definition P_Sdg := psum_1 0 (fun _ x => Copp(Cexp (INR x[0] * (PI / 2)))) (fun _ x => x).
+Definition P_T := psum_1 0 (fun _ x => Cexp (INR x[0] * (PI / 4))) (fun _ x => x).
+Definition P_CX := psum_2 0 (fun _ _ => 1) (fun _ x => [ x[0] ; ((1 - x[0]) * x[1] + x[0] * (1 - x[1]))%nat]).
+
+Definition I {width} (n : nat) : base_psum width := papp1 P_I n.
+Definition X {width} (n : nat) : base_psum width := papp1 P_X n.
+Definition H {width} (n : nat) : base_psum width := papp1 P_H n.
+Definition S {width} (n : nat) : base_psum width := papp1 P_S n.
+Definition Sdg {width} (n : nat) : base_psum width := papp1 P_Sdg n.
+Definition T {width} (n : nat) : base_psum width := papp1 P_T n.
+Definition CX {width} (n m : nat) : base_psum width := papp2 P_CX n m.
+
+Definition W {width} (n : nat) : base_psum width := H n, S n.
+Definition V {width} (n : nat) : base_psum width := Sdg n, H n.
+Definition Y {width} (n : nat) : base_psum width := W n, X n, V n.
+Definition Z {width} (n : nat) : base_psum width := W n, Y n, V n.
+
+(* From https://arxiv.org/pdf/2003.05841.pdf 
 Definition P_Ph (n : nat) (x : bv 1) := psum_1 (Cexp ((2 * PI) / (2 ^ n))) x.
 Definition P_Rz (n : nat) (x : bv 1) := psum_1 (Cexp (((-1 ^ (1 - x[0]))) * (2 * PI) / (2 ^ n))) x.
-Definition P_CX (x : bv 2) := psum_2 C1 ([ x[0] ; ((1 - x[0]) * x[1] + x[0] * (1 - x[1]))%nat]).
+*)
+
+(* Define well-formedness *)
+
+(* Define pseq and prove semantics of Y, Z *)
