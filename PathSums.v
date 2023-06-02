@@ -12,13 +12,14 @@ Local Open Scope C.
 Local Close Scope R.
 
 Local Coercion Nat.b2n : bool >-> nat.
-Local Coercion INR : nat >-> R.
+Local Coercion INR     : nat >-> R.
 
 Definition bv (n : nat) := list bool. 
-Definition get_bv {n : nat} (i : nat) (v : bv n) := nth i v false.
+Definition wf_bv {n} (v : bv n) : Prop := length v = n.
+Definition get_bv (i : nat) (l : list bool) := nth i l false.
 
 (* Replaces element with index `i` in list `l` with `v` *)
-Fixpoint replace {A : Type} (l : list A)  (i : nat) (v : A) := 
+Fixpoint replace {A : Type} (l : list A) (i : nat) (v : A) := 
   match l with 
   | [] => []
   | a :: l1 => match i with 
@@ -29,19 +30,9 @@ Fixpoint replace {A : Type} (l : list A)  (i : nat) (v : A) :=
 
 (* Gets the elements `i` through `i + j` (exclusive in upper range) of list `l`.
 It gets `j` elements starting from index `i`. *)
-Fixpoint take {A : Type} (l : list A) (i j : nat) : list A :=
-  match l with
-  | [] => []
-  | h :: t =>
-    match i with
-    | O =>
-      match j with
-      | O => []
-      | S j' => h :: take t 0 j'
-      end
-    | S i' => take t i' j
-    end
-  end.
+Definition take {A : Type} (l : list A) (i j : nat) : list A := firstn j (skipn i l).
+Example take_last_two_elements_test : take [1 ; 2 ; 3 ; 4] 2 2 = [3 ; 4].
+Proof. compute; reflexivity. Qed.
 
 (* Phase polynomial *)
 Definition phase_poly (m dim : nat) := bv dim -> bv m -> C.
@@ -54,8 +45,8 @@ Definition output_bv (dim : nat) := bv dim -> bv dim -> bv dim.
 (* Path sum *)
 Inductive pscom (P : nat -> Set) (dim : nat) : Set :=
   | pseq : pscom P dim -> pscom P dim -> pscom P dim (* path sum -> path sum -> path sum *)
-  | papp1 : P 1%nat -> nat -> pscom P dim (* path sum -> index -> path sum *)
-  | papp2 : P 2%nat -> nat -> nat -> pscom P dim. (* path sum -> index -> index -> path sum *)
+  | papp1 : P 1%nat -> nat -> pscom P dim (* base path sum -> index -> path sum *)
+  | papp2 : P 2%nat -> nat -> nat -> pscom P dim. (* base path sum -> index -> index -> path sum *)
 
 (* Set the dimension argument to be implicit. *)
 Arguments pseq {P dim}.
@@ -100,16 +91,53 @@ Definition CCX {dim} a b c : base_psum dim :=
   T a, T b, T c, H c.
 
 (* Convert base_psum into psum *)
+
+(* Pad one-dimensional output bitvector function into n-dimensional *)
+Definition pad_out_one_dim (dim i : nat) (out : output_bv 1) : output_bv dim :=
+  fun x y => replace x i (get_bv 0 (out [get_bv i x] y)).
+
+Example list_of_length_2 : forall (a : list bool),
+  length a = 2 -> exists (b c : bool), a = [b ; c].
+Proof.
+  intros a H.
+  destruct a as [| b [| c ]] eqn:E.
+  - simpl in H; inversion H. (* Case: a = [] *)
+  - simpl in H; inversion H. (* Case: a = [b] *)
+  - (* Case: a = [b; c] *)
+    exists b, c. 
+    simpl in H; inversion H. 
+    assert (l = nil).
+    apply length_zero_iff_nil; apply H1.
+    rewrite H0; reflexivity.
+Qed.
+
+Example pad_hadamard_output : forall (a : bv 2) (b : bv 1), wf_bv a ->
+  (pad_out_one_dim 2 1 (fun x y => [get_bv 0 y])) a b = (fun x y => [ get_bv 0 x ; get_bv 0 y ]) a b.
+Proof.
+  intros.
+  unfold pad_out_one_dim; unfold wf_bv in H0.
+  replace (get_bv 0 [get_bv 0 b]) with (get_bv 0 b) by easy.
+  unfold bv in a, b.
+  apply list_of_length_2 in H0.
+  destruct H0 as [c [d H0]]; rewrite H0.
+  compute; reflexivity.
+Qed.
+
+(* Pad one-dimensional path-sum into n-dimensional path-sum *)
 Definition pad_one_path_sum (dim i : nat) (P : base_path_sum 1) : psum dim :=
   match P with
-  | psum_1 m phase out => psum_n dim m phase (fun x y => replace x i (get_bv 0 (out [get_bv i x] y)))
+  | psum_1 m phase out => psum_n dim m phase (pad_out_one_dim dim i out)
   end.
 
+(* Pad two-dimensional output bitvector function into n-dimensional *)
+Definition pad_out_two_dim (dim i j : nat) (out : output_bv 2) : output_bv dim :=
+  (fun x y => replace (replace x i (get_bv 0 (out [get_bv i x ; get_bv j x] y))) 
+                      j (get_bv 1 (out [get_bv i x ; get_bv j x] y))).
+
+(* Pad two-dimensional path-sum into n-dimensional path-sum *)
 Definition pad_two_path_sum (dim i j : nat) (P : base_path_sum 2) : psum dim :=
   match P with
-  | psum_2 m phase out => psum_n dim m phase (fun x y => replace (replace
-                                                        x j (get_bv 0 (out [get_bv i x ; get_bv j x] y))) 
-                                                        j (get_bv 1 (out [get_bv i x ; get_bv j x] y)))
+  | psum_2 m phase out => psum_n dim m phase (pad_out_two_dim dim i j out)
   end.
 
 Definition composed_poly {dim m m'} (phase : phase_poly m dim) (phase' : phase_poly m' dim) (out : output_bv dim) :=
